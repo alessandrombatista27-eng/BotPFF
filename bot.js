@@ -10,32 +10,14 @@ const { google } = require('googleapis');
 const CONFIG = {
   TOKEN: process.env.TOKEN,
   CLIENT_ID: process.env.CLIENT_ID,
-  CHANNEL_ID:          '1472331734795157509',
-  CONTRACT_CHANNEL_ID: '1472331734363275389',
-  CONTRACT_ACCEPTED_CHANNEL_ID: '1472331734795157508',
-  CONTRACT_ROLE_ID:    '1472331733100658894',
-  EMBED_COLOR:         0x2B2D31,
-  SPREADSHEET_ID:      '14GpH9gsM0ohSAimyTnSZwwO-up5Lytchnn-9CXO_-Ng',
-  SHEET_RANGE:         'Playersheet!C:Y',
-  GOOGLE_CREDENTIALS:  './credentials.json',
-  ALLOWED_TEAM_ROLES: [
-    '1473477962773954685',
-    '1473480244026675200',
-    '1473480330877997259',
-    '1473477757865295982',
-    '1473480802942583026',
-    '1473481338077315202',
-    '1473482443846582507',
-    '1473481797408002122',
-    '1473481642915008765',
-    '1473481964173398091',
-    '1473482718720557266',
-    '1473482952443826399',
-    '1473478124468703323',
-    '1473483229754556436',
-    '1473483343155695811',
-    '1473477601031880890',
-  ],
+  CHANNEL_ID: process.env.CHANNEL_ID,
+  CONTRACT_CHANNEL_ID: process.env.CONTRACT_CHANNEL_ID,
+  CONTRACT_ACCEPTED_CHANNEL_ID: process.env.CONTRACT_ACCEPTED_CHANNEL_ID,
+  CONTRACT_ROLE_ID: process.env.CONTRACT_ROLE_ID,
+  EMBED_COLOR: parseInt(process.env.EMBED_COLOR),
+  SPREADSHEET_ID: process.env.SPREADSHEET_ID,
+  SHEET_RANGE: process.env.SHEET_RANGE,
+  ALLOWED_TEAM_ROLES: process.env.ALLOWED_TEAM_ROLES.split(','),
 };
 
 function formatarLibras(valor) {
@@ -350,22 +332,22 @@ client.on('interactionCreate', async (interaction) => {
     const tierEmoji = { S: '🟡', A: '🟠', B: '🟢', C: '🔵', D: '⚪', E: '🔴', F: '⚫' };
     const emoji = tierEmoji[tier] || '⚪';
 
-    const embed = new EmbedBuilder()
-      .setColor(CONFIG.EMBED_COLOR)
-      .setAuthor({
-        name: '🟢 Jogador Disponível',
-        iconURL: interaction.user.displayAvatarURL({ dynamic: true }),
-      })
-      .setThumbnail(avatarUrl)
-      .setDescription(`**Discord:** ${interaction.user}\n**Roblox:** \`${roblox}\``)
-      .addFields(
-        { name: '🎯 Posição', value: posicao || 'Qualquer Posição', inline: false },
-        { name: '📊 Estatísticas', value: `Tier: ${tier === 'N/A' ? '⚪ **N/A**' : `${emoji} **${tier}**`}\nOverall: **${overall}**`, inline: true },
-        ...(experiencia ? [{ name: '📋 Experiência', value: experiencia, inline: false }] : []),
-        ...(sobreMim    ? [{ name: '📝 Sobre Mim',   value: sobreMim,    inline: false }] : []),
-      )
-      .setFooter({ text: `ID: ${interaction.user.id}` })
-      .setTimestamp();
+   const embed = new EmbedBuilder()
+  .setColor(CONFIG.EMBED_COLOR)
+  .setAuthor({
+    name: '🟢 Jogador Disponível',
+    iconURL: interaction.user.displayAvatarURL({ dynamic: true }),
+  })
+  .setThumbnail(avatarUrl)
+  .setDescription(`👤 **Jogador**\n**Discord:** ${interaction.user}\n**Roblox:** \`${roblox}\``)
+  .addFields(
+    { name: '⚙️ Posição', value: posicao || 'Qualquer Posição', inline: false },
+    { name: '📊 Estatísticas', value: `Tier: ${tier === 'N/A' ? '⚪ **N/A**' : `${emoji} **${tier}**`}\nOverall: **${overall}**`, inline: true },
+    ...(experiencia ? [{ name: '📋 Experiência', value: experiencia, inline: false }] : []),
+    ...(sobreMim    ? [{ name: '📝 Sobre Mim',   value: sobreMim,    inline: false }] : []),
+  )
+  .setFooter({ text: `ID: ${interaction.user.id}` })
+  .setTimestamp();
 
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
@@ -497,18 +479,19 @@ client.on('interactionCreate', async (interaction) => {
     const teamRole = await guild.roles.fetch(contractData.teamRoleId);
 
     const acceptedEmbedChannel = new EmbedBuilder()
-      .setColor(0x57F287)
-      .setAuthor({
-        name: '🤝 Contratação Confirmada!',
-        iconURL: guild.iconURL({ dynamic: true }),
-      })
-      .setThumbnail(avatarUrl)
-      .setDescription(`**Jogador:** ${interaction.user}\n**Roblox:** \`${roblox}\`\n**Time:** ${teamRole}`)
-      .addFields(
-        { name: '📊 Dados', value: `Tier: ${tier === 'N/A' ? '⚪ **N/A**' : `${emoji} **${tier}**`}\nOVR: **${overall}**\nWage: **${salario}**`, inline: false },
-      )
-      .setFooter({ text: `✅ Contratado por ${manager.tag}` })
-      .setTimestamp();
+  .setColor(0x57F287)
+  .setAuthor({
+    name: '📥 Contratação',
+    iconURL: guild.iconURL({ dynamic: true }),
+  })
+  .setThumbnail(avatarUrl)
+  .setDescription(`♦️ **Jogador**\n**Discord:** ${interaction.user}\n**Roblox:** \`${roblox}\``)
+  .addFields(
+    { name: '🏆 Time', value: `${teamRole}`, inline: false },
+    { name: '📋 Dados', value: `Tier: ${tier === 'N/A' ? '⚪ **N/A**' : `${emoji} **${tier}**`}\nOVR: **${overall}**\nSalário: **${salario}**`, inline: false },
+  )
+  .setFooter({ text: `✅ Contratado por ${manager.tag}` })
+  .setTimestamp();
 
     try {
       const channel = await client.channels.fetch(CONFIG.CONTRACT_ACCEPTED_CHANNEL_ID);
