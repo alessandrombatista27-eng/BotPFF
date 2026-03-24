@@ -158,7 +158,7 @@ client.on('interactionCreate', async (interaction) => {
       .setCustomId('roblox')
       .setLabel('Usuário do Roblox')
       .setStyle(TextInputStyle.Short)
-      .setPlaceholder('ex: erizin_kk')
+      .setPlaceholder('ex: mrgroove')
       .setRequired(true)
       .setMaxLength(50);
 
@@ -400,7 +400,7 @@ client.on('interactionCreate', async (interaction) => {
       .setCustomId('roblox')
       .setLabel('Coloque seu nick do Roblox')
       .setStyle(TextInputStyle.Short)
-      .setPlaceholder('ex: erizin_kk')
+      .setPlaceholder('ex: mrgroove')
       .setRequired(true)
       .setMaxLength(50);
 
