@@ -8,31 +8,32 @@ const {
 const { google } = require('googleapis');
 
 const CONFIG = {
-  TOKEN: process.env.TOKEN,
-  CLIENT_ID: process.env.CLIENT_ID,
-  CHANNEL_ID: process.env.CHANNEL_ID,
-  CONTRACT_CHANNEL_ID: process.env.CONTRACT_CHANNEL_ID,
-  CONTRACT_ACCEPTED_CHANNEL_ID: process.env.CONTRACT_ACCEPTED_CHANNEL_ID,
-  CONTRACT_ROLE_ID: process.env.CONTRACT_ROLE_ID,
-  EMBED_COLOR: parseInt(process.env.EMBED_COLOR),
-  SPREADSHEET_ID: process.env.SPREADSHEET_ID,
-  SHEET_RANGE: process.env.SHEET_RANGE,
-  ALLOWED_TEAM_ROLES: process.env.ALLOWED_TEAM_ROLES.split(','),
+  TOKEN:                        process.env.TOKEN,
+  CLIENT_ID:                    process.env.CLIENT_ID,
+  CHANNEL_ID:                   process.env.CHANNEL_ID,
+  CONTRACT_CHANNEL_ID:          process.env.CONTRACT_CHANNEL_ID,
+  CONTRACT_ACCEPTED_CHANNEL_ID: process.env.CONTRACT_ACCEPTED_CHANNEL_ID || '',
+  SCOUTING_CHANNEL_ID:          process.env.SCOUTING_CHANNEL_ID,
+  CONTRACT_ROLE_ID:             process.env.CONTRACT_ROLE_ID,
+  SCOUTING_ROLE_ID:             process.env.SCOUTING_ROLE_ID,
+  EMBED_COLOR:                  parseInt(process.env.EMBED_COLOR),
+  SPREADSHEET_ID:               process.env.SPREADSHEET_ID,
+  SHEET_RANGE:                  process.env.SHEET_RANGE,
+  ALLOWED_TEAM_ROLES:           (process.env.ALLOWED_TEAM_ROLES || '').split(',').filter(Boolean),
 };
 
 function formatarLibras(valor) {
   if (!valor) return 'N/A';
   const numero = parseFloat(valor.toString().replace(/[^0-9.]/g, ''));
   if (isNaN(numero)) return 'N/A';
-  const arredondado = Math.round(numero);
-  return `£ ${arredondado.toLocaleString('en-GB')}`;
+  return `£ ${Math.round(numero).toLocaleString('en-GB')}`;
 }
 
 async function buscarJogadorNaPlanilha(usernameRoblox) {
   const auth = new google.auth.GoogleAuth({
-  credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS),
-  scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
-});
+    credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS),
+    scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
+  });
 
   const sheets = google.sheets({ version: 'v4', auth });
 
@@ -47,7 +48,7 @@ async function buscarJogadorNaPlanilha(usernameRoblox) {
   const IDX_TIER     = 0;
   const IDX_OVERALL  = 2;
   const IDX_USERNAME = 8;
-  const IDX_WAGE     = 22;
+  const IDX_WAGE     = 9;
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
@@ -118,6 +119,14 @@ async function registrarComandos() {
           .setDescription('Cargo do time que está contratando')
           .setRequired(true))
       .toJSON(),
+    new SlashCommandBuilder()
+      .setName('scouting')
+      .setDescription('🔍 Abre um recrutamento para buscar jogadores')
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName('removescouting')
+      .setDescription('🗑️ Remove seu anúncio de scouting ativo')
+      .toJSON(),
   ];
 
   const rest = new REST({ version: '10' }).setToken(CONFIG.TOKEN);
@@ -131,8 +140,9 @@ async function registrarComandos() {
   }
 }
 
-const freeAgents = new Map();
+const freeAgents      = new Map();
 const pendingContracts = new Map();
+const scoutings        = new Map(); // userId => { messageId, channelId }
 
 client.once('ready', async () => {
   console.log(`✅ Bot online como ${client.user.tag}`);
@@ -217,6 +227,89 @@ client.on('interactionCreate', async (interaction) => {
     });
   }
 
+  // ── /scouting ────────────────────────────────────────────────────────────
+  if (interaction.isChatInputCommand() && interaction.commandName === 'scouting') {
+    if (CONFIG.SCOUTING_ROLE_ID && !interaction.member.roles.cache.has(CONFIG.SCOUTING_ROLE_ID)) {
+      return interaction.reply({
+        content: '⛔ Você não tem permissão para abrir um recrutamento.',
+        flags: 64,
+      });
+    }
+
+    if (scoutings.has(interaction.user.id)) {
+      return interaction.reply({
+        content: '⚠️ Você já possui um recrutamento ativo! Use `/removescouting` para remover antes de criar um novo.',
+        flags: 64,
+      });
+    }
+
+    const modal = new ModalBuilder()
+      .setCustomId('modal_scouting')
+      .setTitle('🔍 Abrir Recrutamento');
+
+    const timeInput = new TextInputBuilder()
+      .setCustomId('time')
+      .setLabel('Time')
+      .setStyle(TextInputStyle.Short)
+      .setPlaceholder('ex: Manchester City')
+      .setRequired(true)
+      .setMaxLength(60);
+
+    const ligaInput = new TextInputBuilder()
+      .setCustomId('liga')
+      .setLabel('Liga')
+      .setStyle(TextInputStyle.Short)
+      .setPlaceholder('ex: Master League')
+      .setRequired(true)
+      .setMaxLength(60);
+
+    const posicaoInput = new TextInputBuilder()
+      .setCustomId('posicao')
+      .setLabel('Posição Buscada')
+      .setStyle(TextInputStyle.Short)
+      .setPlaceholder('ex: GK - Goleiro')
+      .setRequired(true)
+      .setMaxLength(60);
+
+    const requisitosInput = new TextInputBuilder()
+      .setCustomId('requisitos')
+      .setLabel('Requisitos')
+      .setStyle(TextInputStyle.Paragraph)
+      .setPlaceholder('ex: Ter classe alta, saber jogar no pitch...')
+      .setRequired(true)
+      .setMaxLength(300);
+
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(timeInput),
+      new ActionRowBuilder().addComponents(ligaInput),
+      new ActionRowBuilder().addComponents(posicaoInput),
+      new ActionRowBuilder().addComponents(requisitosInput),
+    );
+
+    await interaction.showModal(modal);
+  }
+
+  // ── /removescouting ──────────────────────────────────────────────────────
+  if (interaction.isChatInputCommand() && interaction.commandName === 'removescouting') {
+    const entry = scoutings.get(interaction.user.id);
+    if (!entry) {
+      return interaction.reply({
+        content: '⚠️ Você não possui nenhum recrutamento ativo.',
+        flags: 64,
+      });
+    }
+    try {
+      const channel = await client.channels.fetch(entry.channelId);
+      const msg = await channel.messages.fetch(entry.messageId);
+      await msg.delete();
+    } catch (_) {}
+    scoutings.delete(interaction.user.id);
+    return interaction.reply({
+      content: '✅ Seu recrutamento foi removido!',
+      flags: 64,
+    });
+  }
+
   // ── /contract ────────────────────────────────────────────────────────────
   if (interaction.isChatInputCommand() && interaction.commandName === 'contract') {
     if (!interaction.member.roles.cache.has(CONFIG.CONTRACT_ROLE_ID)) {
@@ -227,28 +320,25 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     const targetUser = interaction.options.getUser('jogador');
-    const teamRole = interaction.options.getRole('time');
+    const teamRole   = interaction.options.getRole('time');
 
-    // Verificar se o cargo está na lista permitida
-    if (!CONFIG.ALLOWED_TEAM_ROLES.includes(teamRole.id)) {
+    if (CONFIG.ALLOWED_TEAM_ROLES.length > 0 && !CONFIG.ALLOWED_TEAM_ROLES.includes(teamRole.id)) {
       return interaction.reply({
         content: '⛔ Este cargo não é válido para contratações. Escolha um cargo de time permitido.',
         flags: 64,
       });
     }
 
-    // Verificar se é um bot
     if (targetUser.bot) {
       return interaction.reply({
-        content: '⛔ Você não pode enviar uma proposta de contratação para um bot.',
+        content: '⛔ Você não pode enviar uma proposta para um bot.',
         flags: 64,
       });
     }
 
-    // Verificar se é a própria pessoa
     if (targetUser.id === interaction.user.id) {
       return interaction.reply({
-        content: '⛔ Você não pode enviar uma proposta de contratação para si mesmo.',
+        content: '⛔ Você não pode enviar uma proposta para si mesmo.',
         flags: 64,
       });
     }
@@ -277,7 +367,6 @@ client.on('interactionCreate', async (interaction) => {
     );
 
     try {
-      // Envia a proposta na DM do jogador
       const dmMessage = await targetUser.send({
         content: `🔔 **Você recebeu uma proposta de contratação!**`,
         embeds: [embed],
@@ -286,19 +375,19 @@ client.on('interactionCreate', async (interaction) => {
 
       pendingContracts.set(dmMessage.id, {
         targetUserId: targetUser.id,
-        managerId: interaction.user.id,
-        guildId: interaction.guild.id,
-        teamRole: teamRole.name,
-        teamRoleId: teamRole.id,
+        managerId:    interaction.user.id,
+        guildId:      interaction.guild.id,
+        teamRole:     teamRole.name,
+        teamRoleId:   teamRole.id,
       });
 
-      await interaction.editReply({ 
-        content: `✅ Proposta enviada para ${targetUser} via **mensagem direta**!\n📩 O jogador receberá a proposta na DM dele para o time ${teamRole}.` 
+      await interaction.editReply({
+        content: `✅ Proposta enviada para ${targetUser} via DM! Time: ${teamRole}`,
       });
     } catch (err) {
       console.error('Erro ao enviar DM:', err);
-      await interaction.editReply({ 
-        content: `❌ Não foi possível enviar a proposta para ${targetUser}.\n⚠️ O jogador pode estar com as DMs fechadas.` 
+      await interaction.editReply({
+        content: `❌ Não foi possível enviar a proposta para ${targetUser}.\n⚠️ O jogador pode estar com as DMs fechadas.`,
       });
     }
   }
@@ -319,12 +408,11 @@ client.on('interactionCreate', async (interaction) => {
     try {
       const dados = await buscarJogadorNaPlanilha(roblox);
       if (dados) {
-        tier    = dados.tier || 'N/A';
+        tier    = dados.tier    || 'N/A';
         overall = dados.overall || 'N/A';
       }
     } catch (err) {
       console.error('❌ Erro ao consultar Google Sheets:', err);
-      // Continua mesmo com erro, usando N/A
     }
 
     avatarUrl = await buscarAvatarRoblox(roblox);
@@ -332,22 +420,22 @@ client.on('interactionCreate', async (interaction) => {
     const tierEmoji = { S: '🟡', A: '🟠', B: '🟢', C: '🔵', D: '⚪', E: '🔴', F: '⚫' };
     const emoji = tierEmoji[tier] || '⚪';
 
-   const embed = new EmbedBuilder()
-  .setColor(CONFIG.EMBED_COLOR)
-  .setAuthor({
-    name: '🟢 Jogador Disponível',
-    iconURL: interaction.user.displayAvatarURL({ dynamic: true }),
-  })
-  .setThumbnail(avatarUrl)
-  .setDescription(`👤 **Jogador**\n**Discord:** ${interaction.user}\n**Roblox:** \`${roblox}\``)
-  .addFields(
-    { name: '⚙️ Posição', value: posicao || 'Qualquer Posição', inline: false },
-    { name: '📊 Estatísticas', value: `Tier: ${tier === 'N/A' ? '⚪ **N/A**' : `${emoji} **${tier}**`}\nOverall: **${overall}**`, inline: true },
-    ...(experiencia ? [{ name: '📋 Experiência', value: experiencia, inline: false }] : []),
-    ...(sobreMim    ? [{ name: '📝 Sobre Mim',   value: sobreMim,    inline: false }] : []),
-  )
-  .setFooter({ text: `ID: ${interaction.user.id}` })
-  .setTimestamp();
+    const embed = new EmbedBuilder()
+      .setColor(CONFIG.EMBED_COLOR)
+      .setAuthor({
+        name: '🟢 Jogador Disponível',
+        iconURL: interaction.user.displayAvatarURL({ dynamic: true }),
+      })
+      .setThumbnail(avatarUrl)
+      .setDescription(`👤 **Jogador**\n**Discord:** ${interaction.user}\n**Roblox:** \`${roblox}\``)
+      .addFields(
+        { name: '⚙️ Posição', value: posicao || 'Qualquer Posição', inline: false },
+        { name: '📊 Estatísticas', value: `Tier: ${tier === 'N/A' ? '⚪ **N/A**' : `${emoji} **${tier}**`}\nOverall: **${overall}**`, inline: true },
+        ...(experiencia ? [{ name: '📋 Experiência', value: experiencia, inline: false }] : []),
+        ...(sobreMim    ? [{ name: '📝 Sobre Mim',   value: sobreMim,    inline: false }] : []),
+      )
+      .setFooter({ text: `ID: ${interaction.user.id}` })
+      .setTimestamp();
 
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
@@ -371,11 +459,59 @@ client.on('interactionCreate', async (interaction) => {
     }
   }
 
-  // ── BOTÃO ACEITAR CONTRATO (abre modal) ──────────────────────────────────
+  // ── MODAL: scouting ──────────────────────────────────────────────────────
+  if (interaction.isModalSubmit() && interaction.customId === 'modal_scouting') {
+    const time       = interaction.fields.getTextInputValue('time').trim();
+    const liga       = interaction.fields.getTextInputValue('liga').trim();
+    const posicao    = interaction.fields.getTextInputValue('posicao').trim();
+    const requisitos = interaction.fields.getTextInputValue('requisitos').trim();
+
+    await interaction.deferReply({ flags: 64 });
+
+    const embed = new EmbedBuilder()
+      .setColor(0xFEE75C)
+      .setAuthor({
+        name: '🔎 Recrutamento Aberto',
+        iconURL: interaction.guild.iconURL({ dynamic: true }),
+      })
+      .addFields(
+        { name: '🏆 Time',             value: time,       inline: false },
+        { name: '🏅 Liga',             value: liga,       inline: false },
+        { name: '⚙️ Posição Buscada',  value: posicao,    inline: false },
+        { name: '📋 Requisitos',       value: requisitos, inline: false },
+        { name: '🔍 Recrutador',       value: `${interaction.user} (${interaction.user.username})`, inline: false },
+      )
+      .setFooter({ text: `ID: ${interaction.user.id}` })
+      .setTimestamp();
+
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`btn_remove_scouting_${interaction.user.id}`)
+        .setLabel('🗑️ Encerrar Recrutamento')
+        .setStyle(ButtonStyle.Danger),
+    );
+
+    const scoutingChannelId = CONFIG.SCOUTING_CHANNEL_ID || CONFIG.CHANNEL_ID;
+
+    try {
+      const channel = await client.channels.fetch(scoutingChannelId);
+      const msg = await channel.send({ embeds: [embed], components: [row] });
+      scoutings.set(interaction.user.id, { messageId: msg.id, channelId: msg.channelId });
+      await interaction.editReply({
+        content: `✅ Recrutamento publicado em <#${scoutingChannelId}>!`,
+      });
+    } catch (err) {
+      console.error('Erro ao enviar embed de scouting:', err);
+      await interaction.editReply({
+        content: '❌ Erro ao publicar o recrutamento. Verifique as permissões do bot no canal.',
+      });
+    }
+  }
+
+  // ── BOTÃO ACEITAR CONTRATO ───────────────────────────────────────────────
   if (interaction.isButton() && interaction.customId.startsWith('contract_accept_')) {
-    const parts = interaction.customId.split('_');
+    const parts         = interaction.customId.split('_');
     const allowedUserId = parts[2];
-    const guildId = parts[3];
 
     if (interaction.user.id !== allowedUserId) {
       return interaction.reply({
@@ -413,10 +549,10 @@ client.on('interactionCreate', async (interaction) => {
 
   // ── MODAL: aceitar contrato ──────────────────────────────────────────────
   if (interaction.isModalSubmit() && interaction.customId.startsWith('modal_accept_contract_')) {
-    const messageId = interaction.customId.replace('modal_accept_contract_', '');
-    const roblox = interaction.fields.getTextInputValue('roblox').trim();
-
+    const messageId    = interaction.customId.replace('modal_accept_contract_', '');
+    const roblox       = interaction.fields.getTextInputValue('roblox').trim();
     const contractData = pendingContracts.get(messageId);
+
     if (!contractData) {
       return interaction.reply({
         content: '⚠️ Esta proposta já foi processada ou expirou.',
@@ -434,67 +570,59 @@ client.on('interactionCreate', async (interaction) => {
     try {
       const dados = await buscarJogadorNaPlanilha(roblox);
       if (dados) {
-        tier    = dados.tier || 'N/A';
+        tier    = dados.tier    || 'N/A';
         overall = dados.overall || 'N/A';
         wage    = dados.wage;
       }
     } catch (err) {
       console.error('❌ Erro ao consultar Google Sheets:', err);
-      // Continua mesmo com erro, usando N/A
     }
 
     avatarUrl = await buscarAvatarRoblox(roblox);
 
     const tierEmoji = { S: '🟡', A: '🟠', B: '🟢', C: '🔵', D: '⚪', E: '🔴', F: '⚫' };
-    const emoji = tierEmoji[tier] || '⚪';
+    const emoji  = tierEmoji[tier] || '⚪';
     const salario = formatarLibras(wage);
 
-    // Atualiza a mensagem na DM
     const acceptedEmbedDM = new EmbedBuilder()
       .setColor(0x57F287)
-      .setAuthor({
-        name: '🤝 Contratação Confirmada!',
-      })
+      .setAuthor({ name: '🤝 Contratação Confirmada!' })
       .setThumbnail(avatarUrl)
       .setDescription(`**Roblox:** \`${roblox}\`\n**Time:** ${contractData.teamRole}`)
       .addFields(
         { name: '📊 Dados', value: `Tier: ${tier === 'N/A' ? '⚪ **N/A**' : `${emoji} **${tier}**`}\nOVR: **${overall}**\nWage: **${salario}**`, inline: false },
       )
-      .setFooter({ text: `✅ Você aceitou a proposta!` })
+      .setFooter({ text: '✅ Você aceitou a proposta!' })
       .setTimestamp();
 
     try {
-      await interaction.message.edit({
-        content: null,
-        embeds: [acceptedEmbedDM],
-        components: [],
-      });
+      await interaction.message.edit({ content: null, embeds: [acceptedEmbedDM], components: [] });
     } catch (err) {
       console.error('Erro ao editar DM:', err);
     }
 
-    // Envia o anúncio no canal de contratações aceitas
-    const guild = await client.guilds.fetch(contractData.guildId);
-    const manager = await client.users.fetch(contractData.managerId);
+    const guild    = await client.guilds.fetch(contractData.guildId);
+    const manager  = await client.users.fetch(contractData.managerId);
     const teamRole = await guild.roles.fetch(contractData.teamRoleId);
 
     const acceptedEmbedChannel = new EmbedBuilder()
-  .setColor(0x57F287)
-  .setAuthor({
-    name: '📥 Contratação',
-    iconURL: guild.iconURL({ dynamic: true }),
-  })
-  .setThumbnail(avatarUrl)
-  .setDescription(`♦️ **Jogador**\n**Discord:** ${interaction.user}\n**Roblox:** \`${roblox}\``)
-  .addFields(
-    { name: '🏆 Time', value: `${teamRole}`, inline: false },
-    { name: '📋 Dados', value: `Tier: ${tier === 'N/A' ? '⚪ **N/A**' : `${emoji} **${tier}**`}\nOVR: **${overall}**\nSalário: **${salario}**`, inline: false },
-  )
-  .setFooter({ text: `✅ Contratado por ${manager.tag}` })
-  .setTimestamp();
+      .setColor(0x57F287)
+      .setAuthor({
+        name: '📥 Contratação',
+        iconURL: guild.iconURL({ dynamic: true }),
+      })
+      .setThumbnail(avatarUrl)
+      .setDescription(`♦️ **Jogador**\n**Discord:** ${interaction.user}\n**Roblox:** \`${roblox}\``)
+      .addFields(
+        { name: '🏆 Time',    value: `${teamRole}`, inline: false },
+        { name: '📋 Dados',   value: `Tier: ${tier === 'N/A' ? '⚪ **N/A**' : `${emoji} **${tier}**`}\nOVR: **${overall}**\nSalário: **${salario}**`, inline: false },
+      )
+      .setFooter({ text: `✅ Contratado por ${manager.tag}` })
+      .setTimestamp();
 
     try {
-      const channel = await client.channels.fetch(CONFIG.CONTRACT_ACCEPTED_CHANNEL_ID);
+      const channelId = CONFIG.CONTRACT_ACCEPTED_CHANNEL_ID || CONFIG.CONTRACT_CHANNEL_ID;
+      const channel   = await client.channels.fetch(channelId);
       await channel.send({ embeds: [acceptedEmbedChannel] });
     } catch (err) {
       console.error('Erro ao enviar no canal de contratos aceitos:', err);
@@ -502,25 +630,22 @@ client.on('interactionCreate', async (interaction) => {
 
     pendingContracts.delete(messageId);
 
-    // Remove o anúncio de free agent do jogador se existir
     const faEntry = freeAgents.get(contractData.targetUserId);
     if (faEntry) {
       try {
         const faChannel = await client.channels.fetch(faEntry.channelId);
-        const faMsg = await faChannel.messages.fetch(faEntry.messageId);
+        const faMsg     = await faChannel.messages.fetch(faEntry.messageId);
         await faMsg.delete();
       } catch (_) {}
       freeAgents.delete(contractData.targetUserId);
     }
 
-    return interaction.editReply({
-      content: '✅ Você aceitou a proposta! Contratação confirmada!',
-    });
+    return interaction.editReply({ content: '✅ Você aceitou a proposta! Contratação confirmada!' });
   }
 
   // ── BOTÃO RECUSAR CONTRATO ───────────────────────────────────────────────
   if (interaction.isButton() && interaction.customId.startsWith('contract_decline_')) {
-    const parts = interaction.customId.split('_');
+    const parts         = interaction.customId.split('_');
     const allowedUserId = parts[2];
 
     if (interaction.user.id !== allowedUserId) {
@@ -540,26 +665,19 @@ client.on('interactionCreate', async (interaction) => {
 
     const declinedEmbed = new EmbedBuilder()
       .setColor(0xED4245)
-      .setAuthor({
-        name: '❌ Proposta Recusada',
-      })
+      .setAuthor({ name: '❌ Proposta Recusada' })
       .setDescription(`**Time:** ${contractData.teamRole}`)
-      .setFooter({ text: `❌ Você recusou esta proposta.` })
+      .setFooter({ text: '❌ Você recusou esta proposta.' })
       .setTimestamp();
 
-    await interaction.message.edit({
-      content: null,
-      embeds: [declinedEmbed],
-      components: [],
-    });
+    await interaction.message.edit({ content: null, embeds: [declinedEmbed], components: [] });
 
     pendingContracts.delete(interaction.message.id);
 
-    // Notifica o técnico que a proposta foi recusada
     try {
       const manager = await client.users.fetch(contractData.managerId);
       await manager.send({
-        content: `❌ **Proposta recusada!**\n${interaction.user} recusou a proposta de contratação para o time **${contractData.teamRole}**.`,
+        content: `❌ **Proposta recusada!**\n${interaction.user} recusou a proposta para o time **${contractData.teamRole}**.`,
       });
     } catch (_) {}
 
@@ -570,7 +688,7 @@ client.on('interactionCreate', async (interaction) => {
   }
 
   // ── BOTÃO REMOVER FREE AGENT ─────────────────────────────────────────────
-  if (interaction.isButton() && interaction.customId.startsWith('btn_remove_')) {
+  if (interaction.isButton() && interaction.customId.startsWith('btn_remove_') && !interaction.customId.startsWith('btn_remove_scouting_')) {
     const ownerId = interaction.customId.replace('btn_remove_', '');
     const isOwner = interaction.user.id === ownerId;
     const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.ManageMessages);
@@ -586,6 +704,27 @@ client.on('interactionCreate', async (interaction) => {
     freeAgents.delete(ownerId);
     return interaction.reply({
       content: '✅ Anúncio removido com sucesso!',
+      flags: 64,
+    });
+  }
+
+  // ── BOTÃO ENCERRAR SCOUTING ──────────────────────────────────────────────
+  if (interaction.isButton() && interaction.customId.startsWith('btn_remove_scouting_')) {
+    const ownerId = interaction.customId.replace('btn_remove_scouting_', '');
+    const isOwner = interaction.user.id === ownerId;
+    const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.ManageMessages);
+
+    if (!isOwner && !isAdmin) {
+      return interaction.reply({
+        content: '⛔ Apenas o recrutador ou um moderador pode encerrar este recrutamento.',
+        flags: 64,
+      });
+    }
+
+    try { await interaction.message.delete(); } catch (_) {}
+    scoutings.delete(ownerId);
+    return interaction.reply({
+      content: '✅ Recrutamento encerrado com sucesso!',
       flags: 64,
     });
   }
