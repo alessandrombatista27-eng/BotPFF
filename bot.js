@@ -20,7 +20,10 @@ const CONFIG = {
   SPREADSHEET_ID:               process.env.SPREADSHEET_ID,
   SHEET_RANGE:                  process.env.SHEET_RANGE,
   ALLOWED_TEAM_ROLES:           (process.env.ALLOWED_TEAM_ROLES || '').split(',').filter(Boolean),
+  AGENCY_ADMIN_ROLES:           (process.env.AGENCY_ADMIN_ROLES || '').split(',').filter(Boolean),
 };
+
+let agencyAberta = true;
 
 const FREEAGENCY_COOLDOWN_MS = 15 * 60 * 1000;
 const freeAgencyCooldowns = new Map(); // userId => timestamp do último uso
@@ -130,6 +133,14 @@ async function registrarComandos() {
       .setName('removescouting')
       .setDescription('🗑️ Remove seu anúncio de scouting ativo')
       .toJSON(),
+    new SlashCommandBuilder()
+      .setName('fecharagency')
+      .setDescription('🔒 Fecha o sistema de Free Agency')
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName('abriragency')
+      .setDescription('🔓 Abre o sistema de Free Agency')
+      .toJSON(),
   ];
 
   const rest = new REST({ version: '10' }).setToken(CONFIG.TOKEN);
@@ -156,6 +167,13 @@ client.on('interactionCreate', async (interaction) => {
 
   // ── /freeagency ──────────────────────────────────────────────────────────
   if (interaction.isChatInputCommand() && interaction.commandName === 'freeagency') {
+
+    if (!agencyAberta) {
+      return interaction.reply({
+        content: '🔒 O sistema de Free Agency está fechado no momento.',
+        flags: 64,
+      });
+    }
 
     // Checar cooldown
     const agora       = Date.now();
@@ -408,6 +426,32 @@ client.on('interactionCreate', async (interaction) => {
         content: `❌ Não foi possível enviar a proposta para ${targetUser}.\n⚠️ O jogador pode estar com as DMs fechadas.`,
       });
     }
+  }
+
+  // ── /fecharagency ───────────────────────────────────────────────────────
+  if (interaction.isChatInputCommand() && interaction.commandName === 'fecharagency') {
+    const temPermissao = CONFIG.AGENCY_ADMIN_ROLES.some(roleId => interaction.member.roles.cache.has(roleId));
+    if (!temPermissao) {
+      return interaction.reply({ content: '⛔ Você não tem permissão para usar este comando.', flags: 64 });
+    }
+    if (!agencyAberta) {
+      return interaction.reply({ content: '⚠️ O sistema de Free Agency já está fechado.', flags: 64 });
+    }
+    agencyAberta = false;
+    return interaction.reply({ content: '🔒 Sistema de Free Agency **fechado** com sucesso! Ninguém poderá usar  até ser reaberto.' });
+  }
+
+  // ── /abriragency ────────────────────────────────────────────────────────
+  if (interaction.isChatInputCommand() && interaction.commandName === 'abriragency') {
+    const temPermissao = CONFIG.AGENCY_ADMIN_ROLES.some(roleId => interaction.member.roles.cache.has(roleId));
+    if (!temPermissao) {
+      return interaction.reply({ content: '⛔ Você não tem permissão para usar este comando.', flags: 64 });
+    }
+    if (agencyAberta) {
+      return interaction.reply({ content: '⚠️ O sistema de Free Agency já está aberto.', flags: 64 });
+    }
+    agencyAberta = true;
+    return interaction.reply({ content: '🔓 Sistema de Free Agency **aberto** com sucesso! Jogadores já podem usar .' });
   }
 
   // ── MODAL: freeagency ────────────────────────────────────────────────────
