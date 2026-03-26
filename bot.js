@@ -22,6 +22,9 @@ const CONFIG = {
   ALLOWED_TEAM_ROLES:           (process.env.ALLOWED_TEAM_ROLES || '').split(',').filter(Boolean),
 };
 
+const FREEAGENCY_COOLDOWN_MS = 15 * 60 * 1000;
+const freeAgencyCooldowns = new Map(); // userId => timestamp do último uso
+
 function formatarLibras(valor) {
   if (!valor) return 'N/A';
   const numero = parseFloat(valor.toString().replace(/[^0-9.]/g, ''));
@@ -140,9 +143,9 @@ async function registrarComandos() {
   }
 }
 
-const freeAgents      = new Map();
+const freeAgents       = new Map();
 const pendingContracts = new Map();
-const scoutings        = new Map(); // userId => { messageId, channelId }
+const scoutings        = new Map();
 
 client.once('ready', async () => {
   console.log(`✅ Bot online como ${client.user.tag}`);
@@ -153,6 +156,21 @@ client.on('interactionCreate', async (interaction) => {
 
   // ── /freeagency ──────────────────────────────────────────────────────────
   if (interaction.isChatInputCommand() && interaction.commandName === 'freeagency') {
+
+    // Checar cooldown
+    const agora       = Date.now();
+    const ultimoUso   = freeAgencyCooldowns.get(interaction.user.id) || 0;
+    const tempoRestante = FREEAGENCY_COOLDOWN_MS - (agora - ultimoUso);
+
+    if (tempoRestante > 0) {
+      const minutos  = Math.floor(tempoRestante / 60000);
+      const segundos = Math.floor((tempoRestante % 60000) / 1000);
+      return interaction.reply({
+        content: `⏳ Você está em cooldown! Aguarde **${minutos}m ${segundos}s** para usar o comando novamente.`,
+        flags: 64,
+      });
+    }
+
     if (freeAgents.has(interaction.user.id)) {
       return interaction.reply({
         content: '⚠️ Você já possui um anúncio ativo! Use `/removefa` para remover antes de criar um novo.',
@@ -448,8 +466,12 @@ client.on('interactionCreate', async (interaction) => {
       const channel = await client.channels.fetch(CONFIG.CHANNEL_ID);
       const msg = await channel.send({ embeds: [embed], components: [row] });
       freeAgents.set(interaction.user.id, { messageId: msg.id, channelId: msg.channelId });
+
+      // Registra o cooldown só após publicar com sucesso
+      freeAgencyCooldowns.set(interaction.user.id, Date.now());
+
       await interaction.editReply({
-        content: `✅ Anúncio publicado em <#${CONFIG.CHANNEL_ID}>!\n📊 Tier: **${tier}** | Overall: **${overall}**`,
+        content: `✅ Anúncio publicado em <#${CONFIG.CHANNEL_ID}>!\n📊 Tier: **${tier}** | Overall: **${overall}**\n⏳ Você poderá usar o comando novamente em **15 minutos**.`,
       });
     } catch (err) {
       console.error('Erro ao enviar embed:', err);
@@ -475,11 +497,11 @@ client.on('interactionCreate', async (interaction) => {
         iconURL: interaction.guild.iconURL({ dynamic: true }),
       })
       .addFields(
-        { name: '🏆 Time',             value: time,       inline: false },
-        { name: '🏅 Liga',             value: liga,       inline: false },
-        { name: '⚙️ Posição Buscada',  value: posicao,    inline: false },
-        { name: '📋 Requisitos',       value: requisitos, inline: false },
-        { name: '🔍 Recrutador',       value: `${interaction.user} (${interaction.user.username})`, inline: false },
+        { name: '🏆 Time',            value: time,       inline: false },
+        { name: '🏅 Liga',            value: liga,       inline: false },
+        { name: '⚙️ Posição Buscada', value: posicao,    inline: false },
+        { name: '📋 Requisitos',      value: requisitos, inline: false },
+        { name: '🔍 Recrutador',      value: `${interaction.user} (${interaction.user.username})`, inline: false },
       )
       .setFooter({ text: `ID: ${interaction.user.id}` })
       .setTimestamp();
@@ -581,7 +603,7 @@ client.on('interactionCreate', async (interaction) => {
     avatarUrl = await buscarAvatarRoblox(roblox);
 
     const tierEmoji = { S: '🟡', A: '🟠', B: '🟢', C: '🔵', D: '⚪', E: '🔴', F: '⚫' };
-    const emoji  = tierEmoji[tier] || '⚪';
+    const emoji   = tierEmoji[tier] || '⚪';
     const salario = formatarLibras(wage);
 
     const acceptedEmbedDM = new EmbedBuilder()
@@ -614,8 +636,8 @@ client.on('interactionCreate', async (interaction) => {
       .setThumbnail(avatarUrl)
       .setDescription(`♦️ **Jogador**\n**Discord:** ${interaction.user}\n**Roblox:** \`${roblox}\``)
       .addFields(
-        { name: '🏆 Time',    value: `${teamRole}`, inline: false },
-        { name: '📋 Dados',   value: `Tier: ${tier === 'N/A' ? '⚪ **N/A**' : `${emoji} **${tier}**`}\nOVR: **${overall}**\nSalário: **${salario}**`, inline: false },
+        { name: '🏆 Time',  value: `${teamRole}`, inline: false },
+        { name: '📋 Dados', value: `Tier: ${tier === 'N/A' ? '⚪ **N/A**' : `${emoji} **${tier}**`}\nOVR: **${overall}**\nSalário: **${salario}**`, inline: false },
       )
       .setFooter({ text: `✅ Contratado por ${manager.tag}` })
       .setTimestamp();
